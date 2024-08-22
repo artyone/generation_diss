@@ -1,145 +1,181 @@
+import os
 import sys
 import time
+from collections import namedtuple
 from functools import partial
 
 import numpy as np
 import pyaudio
-from PyQt6.QtCore import Qt, QThread, QTimer
+from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtNetwork import QUdpSocket
-from PyQt6.QtWidgets import (QApplication, QComboBox, QHBoxLayout, QLabel,
-                             QLineEdit, QMainWindow, QPushButton, QVBoxLayout,
-                             QWidget)
+from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout,
+                             QLabel, QLineEdit, QListWidget, QMainWindow,
+                             QPushButton, QTabWidget, QVBoxLayout, QWidget)
 
+from player import CallbackPlayer
+from signals import SinusSignal
 
-class Signal:
-    def __init__(
-        self,
-        freq1, freq2, freq3,
-        amp1, amp2, amp3,
-        phase1, phase2, phase3,
-        chunk_size,
-        sampling_rate, *args
-    ):
-        self.freq_unch0 = freq1
-        self.freq_unch1 = freq2
-        self.freq_unch2 = freq3
-        self.amp_unch0 = amp1
-        self.amp_unch1 = amp2
-        self.amp_unch2 = amp3
-        self.phase_unch0_ch2 = np.deg2rad(phase1)
-        self.phase_unch1_ch2 = np.deg2rad(phase2)
-        self.phase_unch2_ch2 = np.deg2rad(phase3)
-        self.sampling_rate = sampling_rate
-        self.chunk_size = chunk_size
-        self.current_index = 0
-        self.current_channel = None
-        self.default_length_signal = 2 * np.pi
-        self.init_signals()
+SinusSettings = namedtuple(
+    'Sinus_settings', [
+        'sampling_rate', 
+        'freq1', 'freq2', 'freq3', 
+        'amp1', 'amp2', 'amp3',
+        'phase1', 'phase2', 'phase3'
+    ]
+)
+
+class SinusTab(QWidget):
+    def __init__(self, parent, *args, **kwargs):
+        super().__init__(parent, *args, **kwargs)
+        self.parent = parent
+        self.initUI()
     
-    def init_signals(self):
-        self.signal_noise = self.gen_signal(ch=None)
-        self.signal_ch0 = self.gen_signal(ch=0)
-        self.signal_ch1 = self.gen_signal(ch=1)
-        self.signal_ch2 = self.gen_signal(ch=2)
-
-    def gen_signal(self, ch):
-        if ch is not None:
-            freq = getattr(self, f'freq_unch{ch}')
-            amp = getattr(self, f'amp_unch{ch}')
-            phase_ch2 = getattr(self, f'phase_unch{ch}_ch2')
-        else:
-            freq = amp = phase_ch2 = 0
-
-        t = np.arange(0, 1, 1 / self.sampling_rate)
-        signal_left = amp * np.sin(t * 2 * np.pi * freq)
-        signal_right = amp * np.sin(t * 2 * np.pi * freq + phase_ch2)
-        signal_stereo = np.empty((len(t), 2))
-        signal_stereo[:, 0] = signal_left
-        signal_stereo[:, 1] = signal_right
-        return signal_stereo.astype(np.float32)
-    
-    def get_next_chunk(self):
-
-        if self.current_channel is not None:
-            current_signal = getattr(self, f'signal_ch{self.current_channel}')
-        else:
-            current_signal = self.signal_noise
-        current_index = self.current_index
-        if len(current_signal) <= (current_index + self.chunk_size):
-            chunk = np.vstack((current_signal[current_index:], current_signal[:self.chunk_size - (len(current_signal) - current_index)]))
-            self.current_index = self.chunk_size - (len(current_signal) - current_index)
-        else:
-            chunk = current_signal[current_index:current_index + self.chunk_size]
-            self.current_index += self.chunk_size
-        return chunk
-    
-    def update_settings(
-        self,
-        freq1, freq2, freq3,
-        amp1, amp2, amp3,
-        phase1, phase2, phase3,
-        *args
-    ):
-        self.freq_unch0 = freq1
-        self.freq_unch1 = freq2
-        self.freq_unch2 = freq3
-        self.amp_unch0 = amp1
-        self.amp_unch1 = amp2
-        self.amp_unch2 = amp3
-        self.phase_unch0_ch2 = np.deg2rad(phase1)
-        self.phase_unch1_ch2 = np.deg2rad(phase2)
-        self.phase_unch2_ch2 = np.deg2rad(phase3)
-        self.init_signals()
-        self.current_index = 0
-
-    def switch_signal(self, channel):
-        self.current_channel = channel
-        self.current_index = 0
-
-class CallbackPlayer(QThread):
-    def __init__(
-            self, signal: Signal, chunk_size: int, sampling_rate: int, device_index: int
-    ):
+    def initUI(self):
+        layout = QVBoxLayout()
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
         
-        self.signal = signal
-        self.chunk_size = chunk_size
-        self.sampling_rate = sampling_rate
-        self.device_index = device_index
-        self.p = pyaudio.PyAudio()
-        self.stream = None
-        super().__init__()
+        sampling_rate_layout = QHBoxLayout()
 
-    def callback_play(self, in_data, frame_count, time_info, status):
-        current_signal = self.signal.get_next_chunk()
-        return (current_signal.tobytes(), pyaudio.paContinue)
+        sampling_rate_label = QLabel('Частота дискретизации')
+        sampling_rate_label.setFixedWidth(155)
+        sampling_rate_layout.addWidget(sampling_rate_label)
+
+        self.sampling_rate_le = QLineEdit(f'44100')
+        self.sampling_rate_le.setPlaceholderText('Частота дискретизации:')
+        self.sampling_rate_le.textChanged.connect(self.text_changed_handler)
+        sampling_rate_layout.addWidget(self.sampling_rate_le)
+
+        layout.addLayout(sampling_rate_layout)
+        
+        freq_layout = QHBoxLayout()
+
+        freq_label = QLabel('Частота (от 0 до 20000 Гц):')
+        freq_label.setFixedWidth(155)
+        freq_layout.addWidget(freq_label)
+
+        self.freq1_le = QLineEdit('20')
+        self.freq1_le.setPlaceholderText('Частота унч1')
+        self.freq1_le.textChanged.connect(self.text_changed_handler)
+        freq_layout.addWidget(self.freq1_le)
+
+        self.freq2_le = QLineEdit('200')
+        self.freq2_le.setPlaceholderText('Частота унч2')
+        self.freq2_le.textChanged.connect(self.text_changed_handler)
+        freq_layout.addWidget(self.freq2_le)
+
+        self.freq3_le = QLineEdit('1000')
+        self.freq3_le.setPlaceholderText('Частота унч3')
+        self.freq3_le.textChanged.connect(self.text_changed_handler)
+        freq_layout.addWidget(self.freq3_le)
+        
+        layout.addLayout(freq_layout)
+
+        amp_layout = QHBoxLayout()
+
+        amp_label = QLabel('Амплитуда (от 0 до 1):')
+        amp_label.setFixedWidth(155)
+        amp_layout.addWidget(amp_label)
+
+        self.amp1_le = QLineEdit('1')
+        self.amp1_le.setPlaceholderText('Амплитуда унч1')
+        self.amp1_le.textChanged.connect(self.text_changed_handler)
+        amp_layout.addWidget(self.amp1_le)
+
+        self.amp2_le = QLineEdit('1')
+        self.amp2_le.setPlaceholderText('Амплитуда унч2')
+        self.amp2_le.textChanged.connect(self.text_changed_handler)
+        amp_layout.addWidget(self.amp2_le)
+
+        self.amp3_le = QLineEdit('1')
+        self.amp3_le.setPlaceholderText('Амплитуда унч3')
+        self.amp3_le.textChanged.connect(self.text_changed_handler)
+        amp_layout.addWidget(self.amp3_le)
+        
+        layout.addLayout(amp_layout)
+        
+        ph_layout = QHBoxLayout()
+
+        ph1_label = QLabel('Фаза 2 канала (от 0° до 360°):')
+        ph1_label.setFixedWidth(155)
+        ph_layout.addWidget(ph1_label)
+
+        self.ph1_le = QLineEdit('90')
+        self.ph1_le.setPlaceholderText('Фаза 2 канала унч1')
+        self.ph1_le.textChanged.connect(self.text_changed_handler)
+        ph_layout.addWidget(self.ph1_le)
+
+        self.ph2_le = QLineEdit('90')
+        self.ph2_le.setPlaceholderText('Фаза 2 канала унч2')
+        self.ph2_le.textChanged.connect(self.text_changed_handler)
+        ph_layout.addWidget(self.ph2_le)
+
+        self.ph3_le = QLineEdit('90')
+        self.ph3_le.setPlaceholderText('Фаза 2 канала унч3')
+        self.ph3_le.textChanged.connect(self.text_changed_handler)
+        ph_layout.addWidget(self.ph3_le)
+        
+        layout.addLayout(ph_layout)
+        self.setLayout(layout)
+        
+    def text_changed_handler(self):
+        settings = self.get_values_from_le()
+        if settings:
+            self.parent.update_sinus_signal(settings)
     
-    def run(self):
+    def block_line_edit(self, param):
+        self.sampling_rate_le.setDisabled(param)
+    
+    def get_values_from_le(self):
         try:
-            self.stream = self.p.open(
-                format=pyaudio.paFloat32,
-                channels=2,
-                rate=self.sampling_rate,
-                output=True,
-                frames_per_buffer=self.chunk_size,
-                output_device_index=self.device_index,
-                stream_callback=self.callback_play,
+            values = SinusSettings(
+                int(self.sampling_rate_le.text()),
+                int(self.freq1_le.text()),
+                int(self.freq2_le.text()),
+                int(self.freq3_le.text()),
+                float(self.amp1_le.text()),
+                float(self.amp2_le.text()),
+                float(self.amp3_le.text()),
+                int(self.ph1_le.text()),
+                int(self.ph2_le.text()),
+                int(self.ph3_le.text()),
             )
         except:
-            self.stream = None
-            self.p.terminate()
-    
-    def stop(self):
-        if self.stream and self.stream.is_active():
-            self.stream.close()
-            self.stream = None
-        self.p.terminate()
-    
-    def switch_signal(self, channel):
-        self.signal.switch_signal(channel)
+            return
+        return values
+        
+class FilesTab(QWidget):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        layout = QVBoxLayout()
+        self.button = QPushButton("Выбрать папку", self)
+        self.file_list = QListWidget(self)
+
+        layout.addWidget(self.button)
+        layout.addWidget(self.file_list)
+        
+        self.setLayout(layout)
+
+        self.button.clicked.connect(self.select_folder)
+
+    def select_folder(self):
+        folder_path = QFileDialog.getExistingDirectory(self, "Выберите папку")
+
+        if folder_path:
+            self.file_list.clear()
+
+            files = os.listdir(folder_path)
+            for file_name in files:
+                full_path = os.path.join(folder_path, file_name)
+                if os.path.isfile(full_path) and file_name[-4:] == ".cap":
+                    self.file_list.addItem(file_name)
+        
 
 class IndicatorWidget(QWidget):
     def __init__(self):
         super().__init__()
+        self.fd1, self.fd2, self.fd3 = 0, 0, 0
+        self.tracking1, self.tracking2, self.tracking3 = False, False, False
         self.initUI()
 
     def initUI(self):
@@ -153,34 +189,35 @@ class IndicatorWidget(QWidget):
         layout = QHBoxLayout(self)
 
         fd1_layout = QVBoxLayout()
-        self.fd1_lbl = QLabel('Fd1: -')
+        self.fd1_lbl = QLabel()
         fd1_layout.addWidget(self.fd1_lbl)
-        self.tracking1_lbl = QLabel('Tracking1: ✘')
+        self.tracking1_lbl = QLabel()
         fd1_layout.addWidget(self.tracking1_lbl)
 
         fd2_layout = QVBoxLayout()
-        self.fd2_lbl = QLabel('Fd2: -')
+        self.fd2_lbl = QLabel()
         fd2_layout.addWidget(self.fd2_lbl)
-        self.tracking2_lbl = QLabel('Tracking2: ✘')
+        self.tracking2_lbl = QLabel()
         fd2_layout.addWidget(self.tracking2_lbl)
 
         fd3_layout = QVBoxLayout()
-        self.fd3_lbl = QLabel('Fd3: -')
+        self.fd3_lbl = QLabel()
         fd3_layout.addWidget(self.fd3_lbl)
-        self.tracking3_lbl = QLabel('Tracking3: ✘')
+        self.tracking3_lbl = QLabel()
         fd3_layout.addWidget(self.tracking3_lbl)
 
         layout.addLayout(fd1_layout)
         layout.addLayout(fd2_layout)
         layout.addLayout(fd3_layout)
+        self.update_values()
 
-    def update_values(self, fd1, fd2, fd3, tracking1, tracking2, tracking3):
-        self.fd1_lbl.setText(f'Fd1: {fd1}')
-        self.tracking1_lbl.setText(f'Tracking1: {"✓" if tracking1 else "✘"}')
-        self.fd2_lbl.setText(f'Fd2: {fd2}')
-        self.tracking2_lbl.setText(f'Tracking2: {"✓" if tracking2 else "✘"}')
-        self.fd3_lbl.setText(f'Fd3: {fd3}')
-        self.tracking3_lbl.setText(f'Tracking3: {"✓" if tracking3 else "✘"}')
+    def update_values(self):
+        self.fd1_lbl.setText(f'Fd1: {self.fd1}')
+        self.fd2_lbl.setText(f'Fd2: {self.fd2}')
+        self.fd3_lbl.setText(f'Fd3: {self.fd3}')
+        self.tracking1_lbl.setText(f'Tracking1: {"✓" if self.tracking1 else "✘"}')
+        self.tracking2_lbl.setText(f'Tracking2: {"✓" if self.tracking2 else "✘"}')
+        self.tracking3_lbl.setText(f'Tracking3: {"✓" if self.tracking3 else "✘"}')
 
 
 class MainWindow(QMainWindow):
@@ -188,10 +225,8 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.socket = QUdpSocket()
         self.received_packets = 0
-        self.fd1, self.fd2, self.fd3 = 0, 0, 0
-        self.tracking1, self.tracking2, self.tracking3 = False, False, False
-        self.counter_timer = QTimer(self)
-        self.counter_timer.timeout.connect(self.update_info)
+        self.updater_udp_information_timer = QTimer(self)
+        self.updater_udp_information_timer.timeout.connect(self.update_info)
         self.cache_data = b''
         self.current_channel = None
         self.player = None
@@ -199,10 +234,11 @@ class MainWindow(QMainWindow):
         self.initUI()
 
     def initUI(self):
-        main_widget = QWidget(self)
-
+        
+        main_widget = QTabWidget(self)
         main_layout = QVBoxLayout(main_widget)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        
         device_layout = QHBoxLayout()
         self.device_cmb = QComboBox()
         self.refresh_devices()
@@ -215,83 +251,15 @@ class MainWindow(QMainWindow):
 
         main_layout.addLayout(device_layout)
 
-        sampling_rate_layout = QHBoxLayout()
-        main_layout.addLayout(sampling_rate_layout)
+        self.signals_tab_widget = QTabWidget()
 
-        sampling_rate_label = QLabel('Частота дискретизации')
-        sampling_rate_label.setFixedWidth(155)
-        sampling_rate_layout.addWidget(sampling_rate_label)
-
-        self.sampling_rate_le = QLineEdit(f'44100')
-        self.sampling_rate_le.setPlaceholderText('Частота дискретизации:')
-        self.sampling_rate_le.textChanged.connect(self.update_player_settings)
-        sampling_rate_layout.addWidget(self.sampling_rate_le)
-
-        freq_layout = QHBoxLayout()
-        main_layout.addLayout(freq_layout)
-
-        freq_label = QLabel('Частота (от 0 до 20000 Гц):')
-        freq_label.setFixedWidth(155)
-        freq_layout.addWidget(freq_label)
-
-        self.freq1_le = QLineEdit('20')
-        self.freq1_le.setPlaceholderText('Частота унч1')
-        self.freq1_le.textChanged.connect(self.update_player_settings)
-        freq_layout.addWidget(self.freq1_le)
-
-        self.freq2_le = QLineEdit('200')
-        self.freq2_le.setPlaceholderText('Частота унч2')
-        self.freq2_le.textChanged.connect(self.update_player_settings)
-        freq_layout.addWidget(self.freq2_le)
-
-        self.freq3_le = QLineEdit('1000')
-        self.freq3_le.setPlaceholderText('Частота унч3')
-        self.freq3_le.textChanged.connect(self.update_player_settings)
-        freq_layout.addWidget(self.freq3_le)
-
-        amp_layout = QHBoxLayout()
-        main_layout.addLayout(amp_layout)
-
-        amp_label = QLabel('Амплитуда (от 0 до 1):')
-        amp_label.setFixedWidth(155)
-        amp_layout.addWidget(amp_label)
-
-        self.amp1_le = QLineEdit('1')
-        self.amp1_le.setPlaceholderText('Амплитуда унч1')
-        self.amp1_le.textChanged.connect(self.update_player_settings)
-        amp_layout.addWidget(self.amp1_le)
-
-        self.amp2_le = QLineEdit('1')
-        self.amp2_le.setPlaceholderText('Амплитуда унч2')
-        self.amp2_le.textChanged.connect(self.update_player_settings)
-        amp_layout.addWidget(self.amp2_le)
-
-        self.amp3_le = QLineEdit('1')
-        self.amp3_le.setPlaceholderText('Амплитуда унч3')
-        self.amp3_le.textChanged.connect(self.update_player_settings)
-        amp_layout.addWidget(self.amp3_le)
-
-        ph_layout = QHBoxLayout()
-        main_layout.addLayout(ph_layout)
-
-        ph1_label = QLabel('Фаза 2 канала (от 0° до 360°):')
-        ph1_label.setFixedWidth(155)
-        ph_layout.addWidget(ph1_label)
-
-        self.ph1_le = QLineEdit('90')
-        self.ph1_le.setPlaceholderText('Фаза 2 канала унч1')
-        self.ph1_le.textChanged.connect(self.update_player_settings)
-        ph_layout.addWidget(self.ph1_le)
-
-        self.ph2_le = QLineEdit('90')
-        self.ph2_le.setPlaceholderText('Фаза 2 канала унч2')
-        self.ph2_le.textChanged.connect(self.update_player_settings)
-        ph_layout.addWidget(self.ph2_le)
-
-        self.ph3_le = QLineEdit('90')
-        self.ph3_le.setPlaceholderText('Фаза 2 канала унч3')
-        self.ph3_le.textChanged.connect(self.update_player_settings)
-        ph_layout.addWidget(self.ph3_le)
+        self.sinus_tab = SinusTab(self)
+        self.signals_tab_widget.addTab(self.sinus_tab, 'Генератор синуса')
+        
+        self.from_file_tab = FilesTab(self)
+        self.signals_tab_widget.addTab(self.from_file_tab, 'Генератор из *.cap')
+               
+        main_layout.addWidget(self.signals_tab_widget)
 
         chunk_size_label = QLabel('Размер чанка: ')
         self.chunk_size_le = QLineEdit('64')
@@ -313,15 +281,16 @@ class MainWindow(QMainWindow):
         self.indicator_widget = IndicatorWidget()
         main_layout.addWidget(self.indicator_widget)
 
-        self.counter_label = QLabel(
+        self.recieved_udp_packet_label = QLabel(
             f'Получено пакетов: {self.received_packets}')
-        main_layout.addWidget(self.counter_label)
+        main_layout.addWidget(self.recieved_udp_packet_label)
 
         self.error_label = QLabel()
         main_layout.addWidget(self.error_label)
 
         self.setCentralWidget(main_widget)
         self.setWindowTitle('Генератор сигнала')
+        self.setGeometry(100, 100, 700, 700)
         self.show()
 
     def refresh_devices(self):
@@ -333,56 +302,67 @@ class MainWindow(QMainWindow):
             device = pa.get_device_info_by_index(index)
             device_name = device['name']
             device_host_api = device['hostApi']
-            host_api_name = pa.get_host_api_info_by_index(device_host_api)['name']
+            host_api_name = pa.get_host_api_info_by_index(int(device_host_api))['name']
             devices.append(f'{index}. {device_name} - {host_api_name}')
         self.device_cmb.addItems(devices)
         self.device_cmb.setCurrentIndex(int(pa.get_default_output_device_info()['index']))
+        
+    def update_sinus_signal(self, settings):
+        if self.signals_tab_widget.currentIndex() == 0 and isinstance(self.signal, SinusSignal):
+            self.signal.update_settings(
+                freq1=settings.freq1,
+                freq2=settings.freq2,
+                freq3=settings.freq3,
+                amp1=settings.amp1,
+                amp2=settings.amp2,
+                amp3=settings.amp3,
+                phase1=settings.phase1,
+                phase2=settings.phase2,
+                phase3=settings.phase3
+            )
 
-    def get_values_from_form(self):
-        settings = {
-            'freq1': int(self.freq1_le.text()),
-            'freq2': int(self.freq2_le.text()),
-            'freq3': int(self.freq3_le.text()),
-            'amp1': float(self.amp1_le.text()),
-            'amp2': float(self.amp2_le.text()),
-            'amp3': float(self.amp3_le.text()),
-            'ph1': int(self.ph1_le.text()),
-            'ph2': int(self.ph2_le.text()),
-            'ph3': int(self.ph3_le.text()),
-            'chunk_size': int(self.chunk_size_le.text()),
-            'sampling_rate': int(self.sampling_rate_le.text()),
-            'device_id': int(self.device_cmb.currentIndex())
-        }
-        return settings
-
-    def update_player_settings(self):
-        if self.player:
-            try:
-                settings = self.get_values_from_form()
-            except:
-                return
-            self.signal.update_settings(*settings.values())
+    def get_sinus_signal(self):
+        settings = self.sinus_tab.get_values_from_le()
+        try:
+            chunk_size = int(self.chunk_size_le.text())
+            chunk_size = chunk_size if chunk_size in [32, 64, 128, 256, 512, 1024, 2048] else 64
+        except:
+            chunk_size = 64
+            
+        if settings:
+            signal = SinusSignal(
+                sampling_rate=settings.sampling_rate,
+                chunk_size=chunk_size,
+                freq1=settings.freq1,
+                freq2=settings.freq2,
+                freq3=settings.freq3,
+                amp1=settings.amp1,
+                amp2=settings.amp2,
+                amp3=settings.amp3,
+                phase1=settings.phase1,
+                phase2=settings.phase2,
+                phase3=settings.phase3
+            )
+            return signal 
 
     def start_process(self):
         self.error_label.setText('')
         self.received_packets = 0
-
-        try:
-            settings = self.get_values_from_form()
-        except:
-            self.error_label.setText('Неправильно введены параметры')
+        index = self.signals_tab_widget.currentIndex()
+        if index == 0:
+            self.signal = self.get_sinus_signal()
+                    
+        else: return 
+        if self.signal is None:
+            self.error_label.setText('Невозможно создать сигнал по заданным параметрам')
             return
 
-        self.signal = Signal(*settings.values())
         self.player = CallbackPlayer(
-            signal= self.signal,
-            chunk_size=settings['chunk_size'],
-            sampling_rate=settings['sampling_rate'],
-            device_index=settings['device_id']
+            signal=self.signal,
+            device_index=self.device_cmb.currentIndex()
         )
-
-        self.player.start()
-        self.player.wait()
+        
+        self.player.run()
 
         if self.player.stream is None:
             self.error_label.setText('Ошибка аудиосутройства')
@@ -391,13 +371,13 @@ class MainWindow(QMainWindow):
         self.socket.bind(2015)
         self.socket.readyRead.connect(self.read_udp_data)
 
-        self.counter_timer.start(500)
+        self.updater_udp_information_timer.start(500)
 
         self.send_btn.setText('Стоп')
         self.send_btn.clicked.disconnect()
         self.send_btn.clicked.connect(self.stop_process)
 
-        self.block_line_edit(True)
+        self.block_interface(True)
 
 
     def stop_process(self):
@@ -405,20 +385,22 @@ class MainWindow(QMainWindow):
         self.send_btn.clicked.disconnect()
         self.send_btn.clicked.connect(self.start_process)
 
-        self.block_line_edit(False)
+        self.block_interface(False)
         
         if self.player:
             self.player.stop()
             self.player = None
 
         self.socket.close()
-        self.counter_timer.stop()
+        self.updater_udp_information_timer.stop()
         
-    def block_line_edit(self, param):
+    def block_interface(self, param):
         self.refresh_devices_btn.setDisabled(param)
-        self.sampling_rate_le.setDisabled(param)
+        if self.signals_tab_widget.currentIndex() == 0:
+            self.sinus_tab.block_line_edit(param)
         self.device_cmb.setDisabled(param)
         self.chunk_size_le.setDisabled(param)
+
 
     @staticmethod
     def get_start_byte(byte_data):
@@ -479,23 +461,20 @@ class MainWindow(QMainWindow):
                 print(f'Канал изменён на {self.current_channel}, Время смены: {(current_time - self.last_change_time) / 1e6:2f} мс')
                 self.last_change_time = current_time
 
-            
-
     def udpate_fd(self, byte_data):
         for i in range(0, len(byte_data), 37):
             if byte_data[i+1] == 1:
-                self.fd1 = int.from_bytes(byte_data[i+6:i+8], signed=True)
-                self.fd2 = int.from_bytes(byte_data[i+8:i+10], signed=True)
-                self.fd3 = int.from_bytes(byte_data[i+10:i+12], signed=True)
-                self.tracking1 = bool((byte_data[i+23] & 0b0100_0000) >> 6)
-                self.tracking2 = bool((byte_data[i+23] & 0b1000_0000) >> 7)
-                self.tracking3 = bool(byte_data[i+22] & 0b1)
+                self.indicator_widget.fd1 = int.from_bytes(byte_data[i+6:i+8], signed=True)
+                self.indicator_widget.fd2 = int.from_bytes(byte_data[i+8:i+10], signed=True)
+                self.indicator_widget.fd3 = int.from_bytes(byte_data[i+10:i+12], signed=True)
+                self.indicator_widget.tracking1 = bool((byte_data[i+23] & 0b0100_0000) >> 6)
+                self.indicator_widget.tracking2 = bool((byte_data[i+23] & 0b1000_0000) >> 7)
+                self.indicator_widget.tracking3 = bool(byte_data[i+22] & 0b1)
 
     def update_info(self):
-        self.counter_label.setText(
+        self.recieved_udp_packet_label.setText(
             f'Получено пакетов: {self.received_packets}')
-        self.indicator_widget.update_values(
-            self.fd1, self.fd2, self.fd3, self.tracking1, self.tracking2, self.tracking3)
+        self.indicator_widget.update_values()
 
     def close(self):
         if self.player:
