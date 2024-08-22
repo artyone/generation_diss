@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout,
                              QPushButton, QTabWidget, QVBoxLayout, QWidget)
 
 from player import CallbackPlayer
-from signals import SinusSignal
+from signals import SinusSignal, FileSignal
 
 SinusSettings = namedtuple(
     'Sinus_settings', [
@@ -344,6 +344,19 @@ class MainWindow(QMainWindow):
                 phase3=settings.phase3
             )
             return signal 
+        
+    # def get_from_file_signal(self):
+    #     samling_rate = 44100
+    #     try:
+    #         chunk_size = int(self.chunk_size_le.text())
+    #         chunk_size = chunk_size if chunk_size in [32, 64, 128, 256, 512, 1024, 2048] else 64
+    #     except:
+    #         chunk_size = 64
+    #     signal = FileSignal(
+    #         samling_rate=samling_rate,
+    #         chunk_size=chunk_size,
+    #         filenames=self.from_file_tab.get_filenames()
+    #     )
 
     def start_process(self):
         self.error_label.setText('')
@@ -352,7 +365,10 @@ class MainWindow(QMainWindow):
         if index == 0:
             self.signal = self.get_sinus_signal()
                     
-        else: return 
+        elif index == 1:
+            return
+            #self.signal = self.get_from_file_signal()
+        else: return
         if self.signal is None:
             self.error_label.setText('Невозможно создать сигнал по заданным параметрам')
             return
