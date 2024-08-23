@@ -170,7 +170,7 @@ class FilesTab(QWidget):
             for file_name in files:
                 full_path = os.path.join(folder_path, file_name)
                 normalized_path = os.path.normpath(full_path)
-                if os.path.isfile(normalized_path) and file_name[-4:] == ".cap":
+                if os.path.isfile(normalized_path) and file_name[-4:] in {".cap", "apng"}: 
                     self.file_list.addItem(normalized_path)
 
     def get_filenames(self):
@@ -320,7 +320,9 @@ class MainWindow(QMainWindow):
             int(pa.get_default_output_device_info()['index']))
 
     def update_sinus_signal(self, settings):
-        if self.signals_tab_widget.currentIndex() == 0 and isinstance(self.signal, SinusSignal):
+        if not isinstance(self.signal, SinusSignal):
+            return
+        if self.signals_tab_widget.currentIndex() == 0:
             self.signal.update_settings(
                 freq1=settings.freq1,
                 freq2=settings.freq2,
@@ -485,7 +487,6 @@ class MainWindow(QMainWindow):
             self.udpate_fd(current_data)
 
             if self.player:
-
                 if not self.channel_changed(current_data):
                     return
 

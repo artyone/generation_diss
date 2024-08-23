@@ -1,6 +1,6 @@
+import dpkt
 import numpy as np
 from librosa import resample
-import dpkt
 
 
 class SinusSignal:
@@ -221,14 +221,6 @@ class FileSignal:
         signal_stereo = [
             np.column_stack((i, j)) for i, j in zip(unch0, unch1)
         ]
-        # print(signal_stereo[0].shape)
-        # signal_stereo = np.empty((len(channels_data), 2))
-        # signal_stereo[:, 0] = channels_data[channel]['unch0']
-        # signal_stereo[:, 1] = channels_data[channel]['unch1']
-        # print(channels_data[channel]['unch0'].shape)
-        # print(channels_data[channel]['unch1'].shape)
-        # signal_stereo = np.dstack(
-        #     (channels_data[channel]['unch0'], channels_data[channel]['unch1']))
         return signal_stereo
 
     def get_next_chunk(self):
@@ -237,35 +229,39 @@ class FileSignal:
 
         current_channel_data = getattr(self, f'signal_ch{self.current_channel}')
         if self.current_index_in_signal >= len(current_channel_data):
-            return []
+            self.current_index_in_signal = 0
         current_signal = current_channel_data[self.current_index_in_signal]
+        if len(current_signal) <= (self.current_index_in_channel + self.chunk_size):
+            self.current_index_in_channel = 0
         current_index = self.current_index_in_channel
-        if len(current_signal) <= (current_index + self.chunk_size):
-            chunk = np.vstack(
-                (current_signal[current_index:], current_signal[:self.chunk_size - (len(current_signal) - current_index)]))
-            self.current_index_in_channel = self.chunk_size - \
-                (len(current_signal) - current_index)
-        else:
-            chunk = current_signal[current_index:current_index +
-                                   self.chunk_size]
-            self.current_index_in_channel += self.chunk_size
+        chunk = current_signal[current_index:current_index +
+                               self.chunk_size]
+        self.current_index_in_channel += self.chunk_size
         return chunk
 
     def switch_signal(self, channel):
-        if channel == 1:
+        if channel == 0:
             self.current_index_in_signal += 1
         self.current_channel = channel
         self.current_index_in_channel = 0
-        print(self.current_index_in_signal)
 
 
 if __name__ == '__main__':
-    a = FileSignal(chunk_size=1024,
-                   sampling_rate=44100,
-                   filenames=['telemetry/d001/2/TMoo_00052_20230922100804.cap', 'telemetry/d001/2/TMoo_00053_20230922101015.cap'])
-    b = a.get_next_chunk()
-    print(b)
-    a.switch_signal(1)
+    import matplotlib.pyplot as plt
+    signal = FileSignal(chunk_size=64,
+                        sampling_rate=44100,
+                        filenames=['telemetry\d001\TMoo_00088_20230922112638.cap'])
+    b = signal.get_next_chunk()
 
-    b = a.get_next_chunk()
-    print(b)
+    signal.switch_signal(1)
+
+    a = signal.get_next_chunk()
+
+    b = signal.get_next_chunk()
+
+    c = signal.get_next_chunk()
+
+    plt.plot(np.hstack((a[:, 0], b[:, 0], c[:, 0])))
+    plt.plot(np.hstack((a[:, 1], b[:, 1], c[:, 1])))
+
+    plt.show()
