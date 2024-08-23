@@ -2,6 +2,7 @@ import numpy as np
 from librosa import resample
 import dpkt
 
+
 class SinusSignal:
     def __init__(
         self, chunk_size, sampling_rate,
@@ -24,7 +25,7 @@ class SinusSignal:
         self.current_channel = None
         self.default_length_signal = 2 * np.pi
         self.init_signals()
-    
+
     def init_signals(self):
         self.signal_noise = self.gen_signal(ch=None)
         self.signal_ch0 = self.gen_signal(ch=0)
@@ -46,7 +47,7 @@ class SinusSignal:
         signal_stereo[:, 0] = signal_left
         signal_stereo[:, 1] = signal_right
         return signal_stereo.astype(np.float32)
-    
+
     def get_next_chunk(self):
         if self.current_channel is not None:
             current_signal = getattr(self, f'signal_ch{self.current_channel}')
@@ -54,13 +55,16 @@ class SinusSignal:
             current_signal = self.signal_noise
         current_index = self.current_index
         if len(current_signal) <= (current_index + self.chunk_size):
-            chunk = np.vstack((current_signal[current_index:], current_signal[:self.chunk_size - (len(current_signal) - current_index)]))
-            self.current_index = self.chunk_size - (len(current_signal) - current_index)
+            chunk = np.vstack(
+                (current_signal[current_index:], current_signal[:self.chunk_size - (len(current_signal) - current_index)]))
+            self.current_index = self.chunk_size - \
+                (len(current_signal) - current_index)
         else:
-            chunk = current_signal[current_index:current_index + self.chunk_size]
+            chunk = current_signal[current_index:current_index +
+                                   self.chunk_size]
             self.current_index += self.chunk_size
         return chunk
-    
+
     def update_settings(
         self,
         freq1, freq2, freq3,
@@ -82,7 +86,8 @@ class SinusSignal:
     def switch_signal(self, channel):
         self.current_channel = channel
         # self.current_index = 0
-        
+
+
 class FileSignal:
     def __init__(self, chunk_size, sampling_rate, filenames):
         self.chunk_size = chunk_size
@@ -90,7 +95,7 @@ class FileSignal:
         self.filenames = filenames
         self.current_index_in_signal = 0
         self.current_index_in_channel = 0
-        self.current_channel = 1
+        self.current_channel = None
         self.dt = np.dtype([
             ('cs', np.uint8),
             ('adr', np.uint8),
@@ -99,15 +104,17 @@ class FileSignal:
         ]).newbyteorder('>')
 
         self.init_signals()
-        
+
     def init_signals(self):
         list_bytes_data = self.get_bytes_data()
         unpacketed_data = np.frombuffer(list_bytes_data, dtype=self.dt)
-        channels_data, self.times, self.fd = self.get_data_from_unpacketed_data(unpacketed_data)
+        channels_data, self.times, self.fd = self.get_data_from_unpacketed_data(
+            unpacketed_data)
         resampled_channels_data = self.resample_channels(channels_data)
         self.signal_ch0 = self.gen_signal(0, resampled_channels_data)
+        self.signal_ch1 = self.gen_signal(1, resampled_channels_data)
+        self.signal_ch2 = self.gen_signal(2, resampled_channels_data)
 
-    
     def get_bytes_data(self):
         list_bytes = []
         cache = b''
@@ -129,13 +136,15 @@ class FileSignal:
                     if len(cached_packet) in {0, 37}:
                         list_bytes.append(cached_packet)
                     elif list_bytes:
-                        print(f'Ошибка в cap {filename}, номер пакета {num_pkt + 1}')
-                    end_byte = (start_byte + (len(pkt) - start_byte) // 37 * 37)
+                        print(
+                            f'Ошибка в cap {filename}, номер пакета {num_pkt + 1}')
+                    end_byte = (
+                        start_byte + (len(pkt) - start_byte) // 37 * 37)
                     list_bytes.append(pkt[start_byte:end_byte])
                     cache = pkt[end_byte:]
-        data_bytes = b''.join(list_bytes) 
+        data_bytes = b''.join(list_bytes)
         return data_bytes
-    
+
     @staticmethod
     def get_start_byte(byte_data):
         # начинаем итерацию по пакету данных
@@ -147,24 +156,26 @@ class FileSignal:
             if not ((byte_data[i + 1] < 5) and (byte_data[i + 38] < 5)):
                 continue
             # проверяем что разница во времени между меньше 100 мкс
-            current_time = int.from_bytes(byte_data[i + 2: i + 6], byteorder='big')
-            next_time = int.from_bytes(byte_data[i + 39: i + 43], byteorder='big')
+            current_time = int.from_bytes(
+                byte_data[i + 2: i + 6], byteorder='big')
+            next_time = int.from_bytes(
+                byte_data[i + 39: i + 43], byteorder='big')
             time = (0 < (next_time - current_time) < 1000)
             if not time:
                 continue
             # если проверки прошли выдаем стартовый индекс
             return i
         return None
-    
+
     def get_data_from_unpacketed_data(self, unpacketed_data):
         only_adr1 = unpacketed_data[unpacketed_data['adr'] == 1]
         only_adr2 = unpacketed_data[unpacketed_data['adr'] == 2]
-        
+
         channel_switches_adr1 = np.where(
             np.diff((only_adr1['data'][:, 12] & 0b0110_0000) >> 5) != 0)[0] + 1
         channel_switches_adr2 = np.where(
             np.diff(only_adr2['data'][:, 0] >> 2) != 0)[0] + 1
-        
+
         times = []
         fd = []
         for val in channel_switches_adr1:
@@ -174,20 +185,20 @@ class FileSignal:
             fd2 = (current_data[2] << 8) + current_data[3]
             fd3 = (current_data[4] << 8) + current_data[5]
             fd.append((fd1, fd2, fd3))
-            
+
         channels = {
             0: {'unch0': [], 'unch1': []},
             1: {'unch0': [], 'unch1': []},
             2: {'unch0': [], 'unch1': []},
         }
-        
+
         for j, k in zip(channel_switches_adr2, channel_switches_adr2[1:]):
             current_channel = only_adr2[j]['data'][0] >> 2
             channels[current_channel]['unch0'].append(
                 only_adr2[j:k]['data'][:, 1::2].flatten())
             channels[current_channel]['unch1'].append(
                 only_adr2[j:k]['data'][:, 2::2].flatten())
-            
+
         return channels, times, fd
 
     def resample_channels(self, channels):
@@ -202,28 +213,59 @@ class FileSignal:
                     # unch[index] = result_data.astype(np.int8)
                     unch[index] = resample_data
         return channels
-    
+
     def gen_signal(self, channel, channels_data):
-        signal_stereo = np.empty((len(channels_data), 2))
-        signal_stereo[:, 0] = channels_data[channel]['unch0']
-        signal_stereo[:, 1] = channels_data[channel]['unch0']
+        unch0 = channels_data[channel]['unch0']
+        unch1 = channels_data[channel]['unch1']
+
+        signal_stereo = [
+            np.column_stack((i, j)) for i, j in zip(unch0, unch1)
+        ]
+        # print(signal_stereo[0].shape)
+        # signal_stereo = np.empty((len(channels_data), 2))
+        # signal_stereo[:, 0] = channels_data[channel]['unch0']
+        # signal_stereo[:, 1] = channels_data[channel]['unch1']
+        # print(channels_data[channel]['unch0'].shape)
+        # print(channels_data[channel]['unch1'].shape)
+        # signal_stereo = np.dstack(
+        #     (channels_data[channel]['unch0'], channels_data[channel]['unch1']))
         return signal_stereo
-        
+
     def get_next_chunk(self):
-        if self.current_index_in_signal >= self.signal_ch0:
+        if self.current_channel is None:
+            return np.zeros((self.chunk_size, 2))
+
+        current_channel_data = getattr(self, f'signal_ch{self.current_channel}')
+        if self.current_index_in_signal >= len(current_channel_data):
             return []
-        current_signal = getattr(self, f'signal_ch{self.current_channel}')[self.current_index_in_signal]
+        current_signal = current_channel_data[self.current_index_in_signal]
         current_index = self.current_index_in_channel
         if len(current_signal) <= (current_index + self.chunk_size):
-            chunk = np.vstack((current_signal[current_index:], current_signal[:self.chunk_size - (len(current_signal) - current_index)]))
-            self.current_index = self.chunk_size - (len(current_signal) - current_index)
+            chunk = np.vstack(
+                (current_signal[current_index:], current_signal[:self.chunk_size - (len(current_signal) - current_index)]))
+            self.current_index_in_channel = self.chunk_size - \
+                (len(current_signal) - current_index)
         else:
-            chunk = current_signal[current_index:current_index + self.chunk_size]
-            self.current_index += self.chunk_size
+            chunk = current_signal[current_index:current_index +
+                                   self.chunk_size]
+            self.current_index_in_channel += self.chunk_size
         return chunk
-    
+
     def switch_signal(self, channel):
         if channel == 1:
             self.current_index_in_signal += 1
         self.current_channel = channel
         self.current_index_in_channel = 0
+        print(self.current_index_in_signal)
+
+
+if __name__ == '__main__':
+    a = FileSignal(chunk_size=1024,
+                   sampling_rate=44100,
+                   filenames=['telemetry/d001/2/TMoo_00052_20230922100804.cap', 'telemetry/d001/2/TMoo_00053_20230922101015.cap'])
+    b = a.get_next_chunk()
+    print(b)
+    a.switch_signal(1)
+
+    b = a.get_next_chunk()
+    print(b)

@@ -17,23 +17,24 @@ from signals import SinusSignal, FileSignal
 
 SinusSettings = namedtuple(
     'Sinus_settings', [
-        'sampling_rate', 
-        'freq1', 'freq2', 'freq3', 
+        'sampling_rate',
+        'freq1', 'freq2', 'freq3',
         'amp1', 'amp2', 'amp3',
         'phase1', 'phase2', 'phase3'
     ]
 )
+
 
 class SinusTab(QWidget):
     def __init__(self, parent, *args, **kwargs):
         super().__init__(parent, *args, **kwargs)
         self.parent = parent
         self.initUI()
-    
+
     def initUI(self):
         layout = QVBoxLayout()
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
+
         sampling_rate_layout = QHBoxLayout()
 
         sampling_rate_label = QLabel('Частота дискретизации')
@@ -46,7 +47,7 @@ class SinusTab(QWidget):
         sampling_rate_layout.addWidget(self.sampling_rate_le)
 
         layout.addLayout(sampling_rate_layout)
-        
+
         freq_layout = QHBoxLayout()
 
         freq_label = QLabel('Частота (от 0 до 20000 Гц):')
@@ -67,7 +68,7 @@ class SinusTab(QWidget):
         self.freq3_le.setPlaceholderText('Частота унч3')
         self.freq3_le.textChanged.connect(self.text_changed_handler)
         freq_layout.addWidget(self.freq3_le)
-        
+
         layout.addLayout(freq_layout)
 
         amp_layout = QHBoxLayout()
@@ -90,9 +91,9 @@ class SinusTab(QWidget):
         self.amp3_le.setPlaceholderText('Амплитуда унч3')
         self.amp3_le.textChanged.connect(self.text_changed_handler)
         amp_layout.addWidget(self.amp3_le)
-        
+
         layout.addLayout(amp_layout)
-        
+
         ph_layout = QHBoxLayout()
 
         ph1_label = QLabel('Фаза 2 канала (от 0° до 360°):')
@@ -113,18 +114,18 @@ class SinusTab(QWidget):
         self.ph3_le.setPlaceholderText('Фаза 2 канала унч3')
         self.ph3_le.textChanged.connect(self.text_changed_handler)
         ph_layout.addWidget(self.ph3_le)
-        
+
         layout.addLayout(ph_layout)
         self.setLayout(layout)
-        
+
     def text_changed_handler(self):
         settings = self.get_values_from_le()
         if settings:
             self.parent.update_sinus_signal(settings)
-    
+
     def block_line_edit(self, param):
         self.sampling_rate_le.setDisabled(param)
-    
+
     def get_values_from_le(self):
         try:
             values = SinusSettings(
@@ -142,7 +143,8 @@ class SinusTab(QWidget):
         except:
             return
         return values
-        
+
+
 class FilesTab(QWidget):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -153,7 +155,7 @@ class FilesTab(QWidget):
 
         layout.addWidget(self.button)
         layout.addWidget(self.file_list)
-        
+
         self.setLayout(layout)
 
         self.button.clicked.connect(self.select_folder)
@@ -167,9 +169,13 @@ class FilesTab(QWidget):
             files = os.listdir(folder_path)
             for file_name in files:
                 full_path = os.path.join(folder_path, file_name)
-                if os.path.isfile(full_path) and file_name[-4:] == ".cap":
-                    self.file_list.addItem(file_name)
-        
+                normalized_path = os.path.normpath(full_path)
+                if os.path.isfile(normalized_path) and file_name[-4:] == ".cap":
+                    self.file_list.addItem(normalized_path)
+
+    def get_filenames(self):
+        return [self.file_list.item(i).text() for i in range(self.file_list.count())]
+
 
 class IndicatorWidget(QWidget):
     def __init__(self):
@@ -215,9 +221,12 @@ class IndicatorWidget(QWidget):
         self.fd1_lbl.setText(f'Fd1: {self.fd1}')
         self.fd2_lbl.setText(f'Fd2: {self.fd2}')
         self.fd3_lbl.setText(f'Fd3: {self.fd3}')
-        self.tracking1_lbl.setText(f'Tracking1: {"✓" if self.tracking1 else "✘"}')
-        self.tracking2_lbl.setText(f'Tracking2: {"✓" if self.tracking2 else "✘"}')
-        self.tracking3_lbl.setText(f'Tracking3: {"✓" if self.tracking3 else "✘"}')
+        self.tracking1_lbl.setText(
+            f'Tracking1: {"✓" if self.tracking1 else "✘"}')
+        self.tracking2_lbl.setText(
+            f'Tracking2: {"✓" if self.tracking2 else "✘"}')
+        self.tracking3_lbl.setText(
+            f'Tracking3: {"✓" if self.tracking3 else "✘"}')
 
 
 class MainWindow(QMainWindow):
@@ -234,11 +243,11 @@ class MainWindow(QMainWindow):
         self.initUI()
 
     def initUI(self):
-        
+
         main_widget = QTabWidget(self)
         main_layout = QVBoxLayout(main_widget)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-        
+
         device_layout = QHBoxLayout()
         self.device_cmb = QComboBox()
         self.refresh_devices()
@@ -255,10 +264,11 @@ class MainWindow(QMainWindow):
 
         self.sinus_tab = SinusTab(self)
         self.signals_tab_widget.addTab(self.sinus_tab, 'Генератор синуса')
-        
+
         self.from_file_tab = FilesTab(self)
-        self.signals_tab_widget.addTab(self.from_file_tab, 'Генератор из *.cap')
-               
+        self.signals_tab_widget.addTab(
+            self.from_file_tab, 'Генератор из *.cap')
+
         main_layout.addWidget(self.signals_tab_widget)
 
         chunk_size_label = QLabel('Размер чанка: ')
@@ -302,11 +312,13 @@ class MainWindow(QMainWindow):
             device = pa.get_device_info_by_index(index)
             device_name = device['name']
             device_host_api = device['hostApi']
-            host_api_name = pa.get_host_api_info_by_index(int(device_host_api))['name']
+            host_api_name = pa.get_host_api_info_by_index(
+                int(device_host_api))['name']
             devices.append(f'{index}. {device_name} - {host_api_name}')
         self.device_cmb.addItems(devices)
-        self.device_cmb.setCurrentIndex(int(pa.get_default_output_device_info()['index']))
-        
+        self.device_cmb.setCurrentIndex(
+            int(pa.get_default_output_device_info()['index']))
+
     def update_sinus_signal(self, settings):
         if self.signals_tab_widget.currentIndex() == 0 and isinstance(self.signal, SinusSignal):
             self.signal.update_settings(
@@ -325,10 +337,11 @@ class MainWindow(QMainWindow):
         settings = self.sinus_tab.get_values_from_le()
         try:
             chunk_size = int(self.chunk_size_le.text())
-            chunk_size = chunk_size if chunk_size in [32, 64, 128, 256, 512, 1024, 2048] else 64
+            chunk_size = chunk_size if chunk_size in [
+                32, 64, 128, 256, 512, 1024, 2048] else 64
         except:
             chunk_size = 64
-            
+
         if settings:
             signal = SinusSignal(
                 sampling_rate=settings.sampling_rate,
@@ -343,20 +356,24 @@ class MainWindow(QMainWindow):
                 phase2=settings.phase2,
                 phase3=settings.phase3
             )
-            return signal 
-        
-    # def get_from_file_signal(self):
-    #     samling_rate = 44100
-    #     try:
-    #         chunk_size = int(self.chunk_size_le.text())
-    #         chunk_size = chunk_size if chunk_size in [32, 64, 128, 256, 512, 1024, 2048] else 64
-    #     except:
-    #         chunk_size = 64
-    #     signal = FileSignal(
-    #         samling_rate=samling_rate,
-    #         chunk_size=chunk_size,
-    #         filenames=self.from_file_tab.get_filenames()
-    #     )
+            return signal
+
+    def get_from_file_signal(self):
+        sampling_rate = 44100
+        chunk_size = int(self.chunk_size_le.text())
+        if not chunk_size in [32, 64, 128, 256, 512, 1024, 2048]:
+            raise ValueError('Чанк должен быть: [32, 64, 128, 256, 512, 1024, 2048]')
+
+        filenames = self.from_file_tab.get_filenames()
+        if not filenames:
+            raise ValueError('Не выбраны файлы')
+        signal = FileSignal(
+            chunk_size=chunk_size,
+            sampling_rate=sampling_rate,
+            filenames=self.from_file_tab.get_filenames()
+        )
+        return signal
+    
 
     def start_process(self):
         self.error_label.setText('')
@@ -364,26 +381,32 @@ class MainWindow(QMainWindow):
         index = self.signals_tab_widget.currentIndex()
         if index == 0:
             self.signal = self.get_sinus_signal()
-                    
+
         elif index == 1:
+            self.signal = self.get_from_file_signal()
+            # try:
+            #     self.signal = self.get_from_file_signal()
+            # except Exception as e:
+            #     self.error_label.setText(str(e))
+            #     return
+        else:
             return
-            #self.signal = self.get_from_file_signal()
-        else: return
         if self.signal is None:
-            self.error_label.setText('Невозможно создать сигнал по заданным параметрам')
+            self.error_label.setText(
+                'Невозможно создать сигнал по заданным параметрам')
             return
 
         self.player = CallbackPlayer(
             signal=self.signal,
             device_index=self.device_cmb.currentIndex()
         )
-        
+
         self.player.run()
 
         if self.player.stream is None:
             self.error_label.setText('Ошибка аудиосутройства')
             return
-        
+
         self.socket.bind(2015)
         self.socket.readyRead.connect(self.read_udp_data)
 
@@ -395,28 +418,26 @@ class MainWindow(QMainWindow):
 
         self.block_interface(True)
 
-
     def stop_process(self):
         self.send_btn.setText('Старт')
         self.send_btn.clicked.disconnect()
         self.send_btn.clicked.connect(self.start_process)
 
         self.block_interface(False)
-        
+
         if self.player:
             self.player.stop()
             self.player = None
 
         self.socket.close()
         self.updater_udp_information_timer.stop()
-        
+
     def block_interface(self, param):
         self.refresh_devices_btn.setDisabled(param)
         if self.signals_tab_widget.currentIndex() == 0:
             self.sinus_tab.block_line_edit(param)
         self.device_cmb.setDisabled(param)
         self.chunk_size_le.setDisabled(param)
-
 
     @staticmethod
     def get_start_byte(byte_data):
@@ -435,7 +456,7 @@ class MainWindow(QMainWindow):
             #         self.current_channel = current_unch_channel
             #         return True
             if byte_data[i+1] == 2:
-                current_unch_channel = byte_data[i+6]  >> 2
+                current_unch_channel = byte_data[i+6] >> 2
                 if self.current_channel != current_unch_channel and current_unch_channel in [0, 1, 2]:
                     self.current_channel = current_unch_channel
                     return True
@@ -464,27 +485,35 @@ class MainWindow(QMainWindow):
             self.udpate_fd(current_data)
 
             if self.player:
-                
+
                 if not self.channel_changed(current_data):
                     return
-                
+
                 switch_channel_timer = QTimer(self)
                 switch_channel_timer.setSingleShot(True)
-                switch_channel_timer.timeout.connect(partial(self.player.switch_signal, self.current_channel))
-                switch_channel_timer.start(int(self.latency_le.text()) if self.latency_le.text() else 1)
+                switch_channel_timer.timeout.connect(
+                    partial(self.player.switch_signal, self.current_channel))
+                switch_channel_timer.start(
+                    int(self.latency_le.text()) if self.latency_le.text() else 1)
 
                 current_time = time.perf_counter_ns()
-                print(f'Канал изменён на {self.current_channel}, Время смены: {(current_time - self.last_change_time) / 1e6:2f} мс')
+                print(
+                    f'Канал изменён на {self.current_channel}, Время смены: {(current_time - self.last_change_time) / 1e6:2f} мс')
                 self.last_change_time = current_time
 
     def udpate_fd(self, byte_data):
         for i in range(0, len(byte_data), 37):
             if byte_data[i+1] == 1:
-                self.indicator_widget.fd1 = int.from_bytes(byte_data[i+6:i+8], signed=True)
-                self.indicator_widget.fd2 = int.from_bytes(byte_data[i+8:i+10], signed=True)
-                self.indicator_widget.fd3 = int.from_bytes(byte_data[i+10:i+12], signed=True)
-                self.indicator_widget.tracking1 = bool((byte_data[i+23] & 0b0100_0000) >> 6)
-                self.indicator_widget.tracking2 = bool((byte_data[i+23] & 0b1000_0000) >> 7)
+                self.indicator_widget.fd1 = int.from_bytes(
+                    byte_data[i+6:i+8], signed=True)
+                self.indicator_widget.fd2 = int.from_bytes(
+                    byte_data[i+8:i+10], signed=True)
+                self.indicator_widget.fd3 = int.from_bytes(
+                    byte_data[i+10:i+12], signed=True)
+                self.indicator_widget.tracking1 = bool(
+                    (byte_data[i+23] & 0b0100_0000) >> 6)
+                self.indicator_widget.tracking2 = bool(
+                    (byte_data[i+23] & 0b1000_0000) >> 7)
                 self.indicator_widget.tracking3 = bool(byte_data[i+22] & 0b1)
 
     def update_info(self):
