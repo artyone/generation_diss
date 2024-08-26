@@ -1,185 +1,66 @@
-import os
+
 import sys
 import time
 from collections import namedtuple
 from functools import partial
 
-import numpy as np
 import pyaudio
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtNetwork import QUdpSocket
-from PyQt6.QtWidgets import (QApplication, QComboBox, QFileDialog, QHBoxLayout,
-                             QLabel, QLineEdit, QListWidget, QMainWindow,
-                             QPushButton, QTabWidget, QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QApplication, QComboBox, QHBoxLayout,
+                             QLabel, QLineEdit, QMainWindow,
+                             QPushButton, QTabWidget, QVBoxLayout, QWidget, QGroupBox)
 
 from player import CallbackPlayer
 from signals import SinusSignal, FileSignal
-
-SinusSettings = namedtuple(
-    'Sinus_settings', [
-        'sampling_rate',
-        'freq1', 'freq2', 'freq3',
-        'amp1', 'amp2', 'amp3',
-        'phase1', 'phase2', 'phase3'
-    ]
-)
+from tabs import SinusTab, FilesTab, SinusSettings
 
 
-class SinusTab(QWidget):
-    def __init__(self, parent, *args, **kwargs):
-        super().__init__(parent, *args, **kwargs)
-        self.parent = parent
-        self.initUI()
 
-    def initUI(self):
-        layout = QVBoxLayout()
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        sampling_rate_layout = QHBoxLayout()
-
-        sampling_rate_label = QLabel('Частота дискретизации')
-        sampling_rate_label.setFixedWidth(155)
-        sampling_rate_layout.addWidget(sampling_rate_label)
-
-        self.sampling_rate_le = QLineEdit(f'44100')
-        self.sampling_rate_le.setPlaceholderText('Частота дискретизации:')
-        self.sampling_rate_le.textChanged.connect(self.text_changed_handler)
-        sampling_rate_layout.addWidget(self.sampling_rate_le)
-
-        layout.addLayout(sampling_rate_layout)
-
-        freq_layout = QHBoxLayout()
-
-        freq_label = QLabel('Частота (от 0 до 20000 Гц):')
-        freq_label.setFixedWidth(155)
-        freq_layout.addWidget(freq_label)
-
-        self.freq1_le = QLineEdit('20')
-        self.freq1_le.setPlaceholderText('Частота унч1')
-        self.freq1_le.textChanged.connect(self.text_changed_handler)
-        freq_layout.addWidget(self.freq1_le)
-
-        self.freq2_le = QLineEdit('200')
-        self.freq2_le.setPlaceholderText('Частота унч2')
-        self.freq2_le.textChanged.connect(self.text_changed_handler)
-        freq_layout.addWidget(self.freq2_le)
-
-        self.freq3_le = QLineEdit('1000')
-        self.freq3_le.setPlaceholderText('Частота унч3')
-        self.freq3_le.textChanged.connect(self.text_changed_handler)
-        freq_layout.addWidget(self.freq3_le)
-
-        layout.addLayout(freq_layout)
-
-        amp_layout = QHBoxLayout()
-
-        amp_label = QLabel('Амплитуда (от 0 до 1):')
-        amp_label.setFixedWidth(155)
-        amp_layout.addWidget(amp_label)
-
-        self.amp1_le = QLineEdit('1')
-        self.amp1_le.setPlaceholderText('Амплитуда унч1')
-        self.amp1_le.textChanged.connect(self.text_changed_handler)
-        amp_layout.addWidget(self.amp1_le)
-
-        self.amp2_le = QLineEdit('1')
-        self.amp2_le.setPlaceholderText('Амплитуда унч2')
-        self.amp2_le.textChanged.connect(self.text_changed_handler)
-        amp_layout.addWidget(self.amp2_le)
-
-        self.amp3_le = QLineEdit('1')
-        self.amp3_le.setPlaceholderText('Амплитуда унч3')
-        self.amp3_le.textChanged.connect(self.text_changed_handler)
-        amp_layout.addWidget(self.amp3_le)
-
-        layout.addLayout(amp_layout)
-
-        ph_layout = QHBoxLayout()
-
-        ph1_label = QLabel('Фаза 2 канала (от 0° до 360°):')
-        ph1_label.setFixedWidth(155)
-        ph_layout.addWidget(ph1_label)
-
-        self.ph1_le = QLineEdit('90')
-        self.ph1_le.setPlaceholderText('Фаза 2 канала унч1')
-        self.ph1_le.textChanged.connect(self.text_changed_handler)
-        ph_layout.addWidget(self.ph1_le)
-
-        self.ph2_le = QLineEdit('90')
-        self.ph2_le.setPlaceholderText('Фаза 2 канала унч2')
-        self.ph2_le.textChanged.connect(self.text_changed_handler)
-        ph_layout.addWidget(self.ph2_le)
-
-        self.ph3_le = QLineEdit('90')
-        self.ph3_le.setPlaceholderText('Фаза 2 канала унч3')
-        self.ph3_le.textChanged.connect(self.text_changed_handler)
-        ph_layout.addWidget(self.ph3_le)
-
-        layout.addLayout(ph_layout)
-        self.setLayout(layout)
-
-    def text_changed_handler(self):
-        settings = self.get_values_from_le()
-        if settings:
-            self.parent.update_sinus_signal(settings)
-
-    def block_line_edit(self, param):
-        self.sampling_rate_le.setDisabled(param)
-
-    def get_values_from_le(self):
-        try:
-            values = SinusSettings(
-                int(self.sampling_rate_le.text()),
-                int(self.freq1_le.text()),
-                int(self.freq2_le.text()),
-                int(self.freq3_le.text()),
-                float(self.amp1_le.text()),
-                float(self.amp2_le.text()),
-                float(self.amp3_le.text()),
-                int(self.ph1_le.text()),
-                int(self.ph2_le.text()),
-                int(self.ph3_le.text()),
-            )
-        except:
-            return
-        return values
-
-
-class FilesTab(QWidget):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-
-        layout = QVBoxLayout()
-        self.button = QPushButton("Выбрать папку", self)
-        self.file_list = QListWidget(self)
-
-        layout.addWidget(self.button)
-        layout.addWidget(self.file_list)
-
-        self.setLayout(layout)
-
-        self.button.clicked.connect(self.select_folder)
-
-    def select_folder(self):
-        folder_path = QFileDialog.getExistingDirectory(self, "Выберите папку")
-
-        if folder_path:
-            self.file_list.clear()
-
-            files = os.listdir(folder_path)
-            for file_name in files:
-                full_path = os.path.join(folder_path, file_name)
-                normalized_path = os.path.normpath(full_path)
-                if os.path.isfile(normalized_path) and file_name[-4:] in {".cap", "apng"}: 
-                    self.file_list.addItem(normalized_path)
-
-    def get_filenames(self):
-        return [self.file_list.item(i).text() for i in range(self.file_list.count())]
-
-
-class IndicatorWidget(QWidget):
+class IndicatorFilesWidget(QGroupBox):
     def __init__(self):
         super().__init__()
+        self.setTitle('Показания из файла')
+        self.fd1, self.fd2, self.fd3 = 0, 0, 0
+        self.time = 0
+        self.initUI()
+    
+    def initUI(self):
+        self.setStyleSheet("""
+            QLabel {
+                font-size: 16pt;
+                font-weight: bold;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        
+        self.time_lbl = QLabel()
+        layout.addWidget(self.time_lbl)
+
+        fd_layout = QHBoxLayout()
+        self.fd1_lbl = QLabel()
+        fd_layout.addWidget(self.fd1_lbl)
+
+        self.fd2_lbl = QLabel()
+        fd_layout.addWidget(self.fd2_lbl)
+
+        self.fd3_lbl = QLabel()
+        fd_layout.addWidget(self.fd3_lbl)
+
+        layout.addLayout(fd_layout)
+        self.update_values()
+
+    def update_values(self):
+        self.fd1_lbl.setText(f'Fd1: {self.fd1}')
+        self.fd2_lbl.setText(f'Fd2: {self.fd2}')
+        self.fd3_lbl.setText(f'Fd3: {self.fd3}')
+        self.time_lbl.setText(f'Время {self.time}')
+
+class IndicatorUdpWidget(QGroupBox):
+    def __init__(self):
+        super().__init__()
+        self.setTitle('Показания по UDP')
         self.fd1, self.fd2, self.fd3 = 0, 0, 0
         self.tracking1, self.tracking2, self.tracking3 = False, False, False
         self.initUI()
@@ -234,16 +115,16 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.socket = QUdpSocket()
         self.received_packets = 0
-        self.updater_udp_information_timer = QTimer(self)
-        self.updater_udp_information_timer.timeout.connect(self.update_info)
+        self.updater_information_timer = QTimer(self)
+        self.updater_information_timer.timeout.connect(self.update_info)
         self.cache_data = b''
         self.current_channel = None
         self.player = None
+        self.signal = None
         self.last_change_time = 0
         self.initUI()
 
     def initUI(self):
-
         main_widget = QTabWidget(self)
         main_layout = QVBoxLayout(main_widget)
         main_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
@@ -261,6 +142,7 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(device_layout)
 
         self.signals_tab_widget = QTabWidget()
+
 
         self.sinus_tab = SinusTab(self)
         self.signals_tab_widget.addTab(self.sinus_tab, 'Генератор синуса')
@@ -288,8 +170,11 @@ class MainWindow(QMainWindow):
         main_layout.addWidget(
             self.send_btn, alignment=Qt.AlignmentFlag.AlignBottom)
 
-        self.indicator_widget = IndicatorWidget()
-        main_layout.addWidget(self.indicator_widget)
+        self.indicator_udp_widget = IndicatorUdpWidget()
+        main_layout.addWidget(self.indicator_udp_widget)
+        
+        self.indicator_files_widget = IndicatorFilesWidget()
+        main_layout.addWidget(self.indicator_files_widget)
 
         self.recieved_udp_packet_label = QLabel(
             f'Получено пакетов: {self.received_packets}')
@@ -297,6 +182,9 @@ class MainWindow(QMainWindow):
 
         self.error_label = QLabel()
         main_layout.addWidget(self.error_label)
+        
+        self.signals_tab_widget.currentChanged.connect(self.show_files_indicator)
+        self.show_files_indicator()
 
         self.setCentralWidget(main_widget)
         self.setWindowTitle('Генератор сигнала')
@@ -318,6 +206,12 @@ class MainWindow(QMainWindow):
         self.device_cmb.addItems(devices)
         self.device_cmb.setCurrentIndex(
             int(pa.get_default_output_device_info()['index']))
+        
+    def show_files_indicator(self):
+        if self.signals_tab_widget.currentIndex() == 0:
+            self.indicator_files_widget.hide()
+        else:
+            self.indicator_files_widget.show()
 
     def update_sinus_signal(self, settings):
         if not isinstance(self.signal, SinusSignal):
@@ -364,7 +258,8 @@ class MainWindow(QMainWindow):
         sampling_rate = 44100
         chunk_size = int(self.chunk_size_le.text())
         if not chunk_size in [32, 64, 128, 256, 512, 1024, 2048]:
-            raise ValueError('Чанк должен быть: [32, 64, 128, 256, 512, 1024, 2048]')
+            raise ValueError(
+                'Чанк должен быть: [32, 64, 128, 256, 512, 1024, 2048]')
 
         filenames = self.from_file_tab.get_filenames()
         if not filenames:
@@ -372,10 +267,10 @@ class MainWindow(QMainWindow):
         signal = FileSignal(
             chunk_size=chunk_size,
             sampling_rate=sampling_rate,
-            filenames=self.from_file_tab.get_filenames()
+            filenames=self.from_file_tab.get_filenames(),
+            cycle_play=self.from_file_tab.cycle_chkbx.isChecked()
         )
         return signal
-    
 
     def start_process(self):
         self.error_label.setText('')
@@ -385,20 +280,21 @@ class MainWindow(QMainWindow):
             self.signal = self.get_sinus_signal()
 
         elif index == 1:
-            self.signal = self.get_from_file_signal()
-            # try:
-            #     self.signal = self.get_from_file_signal()
-            # except Exception as e:
-            #     self.error_label.setText(str(e))
-            #     return
+            try:
+                self.signal = self.get_from_file_signal()
+            except Exception as e:
+                self.error_label.setText(str(e))
+                return
         else:
             return
+        
         if self.signal is None:
             self.error_label.setText(
                 'Невозможно создать сигнал по заданным параметрам')
             return
 
         self.player = CallbackPlayer(
+            parent=self, 
             signal=self.signal,
             device_index=self.device_cmb.currentIndex()
         )
@@ -412,7 +308,7 @@ class MainWindow(QMainWindow):
         self.socket.bind(2015)
         self.socket.readyRead.connect(self.read_udp_data)
 
-        self.updater_udp_information_timer.start(500)
+        self.updater_information_timer.start(500)
 
         self.send_btn.setText('Стоп')
         self.send_btn.clicked.disconnect()
@@ -432,7 +328,7 @@ class MainWindow(QMainWindow):
             self.player = None
 
         self.socket.close()
-        self.updater_udp_information_timer.stop()
+        self.updater_information_timer.stop()
 
     def block_interface(self, param):
         self.refresh_devices_btn.setDisabled(param)
@@ -466,6 +362,10 @@ class MainWindow(QMainWindow):
 
     def read_udp_data(self):
         while self.socket.hasPendingDatagrams():
+            if not self.player.stream.is_active():
+                self.stop_process()
+                return
+            
             self.received_packets += 1
             packet_data, * _ = self.socket.readDatagram(1056)
             packet_data = packet_data[:-32]
@@ -477,18 +377,18 @@ class MainWindow(QMainWindow):
 
             if start_byte is None:
                 self.error_label.setText('Не нашёл начало данных')
-                return
+                continue
 
             end = (len(packet_data) - start_byte) // 37 * 37 + start_byte
             current_data = packet_data[start_byte: end]
 
             self.cache_data = packet_data[end:]
 
-            self.udpate_fd(current_data)
+            self.udpate_time_from_udp(current_data)
 
             if self.player:
                 if not self.channel_changed(current_data):
-                    return
+                    continue
 
                 switch_channel_timer = QTimer(self)
                 switch_channel_timer.setSingleShot(True)
@@ -502,25 +402,37 @@ class MainWindow(QMainWindow):
                     f'Канал изменён на {self.current_channel}, Время смены: {(current_time - self.last_change_time) / 1e6:2f} мс')
                 self.last_change_time = current_time
 
-    def udpate_fd(self, byte_data):
+    def udpate_time_from_udp(self, byte_data):
         for i in range(0, len(byte_data), 37):
             if byte_data[i+1] == 1:
-                self.indicator_widget.fd1 = int.from_bytes(
+                self.indicator_udp_widget.fd1 = int.from_bytes(
                     byte_data[i+6:i+8], signed=True)
-                self.indicator_widget.fd2 = int.from_bytes(
+                self.indicator_udp_widget.fd2 = int.from_bytes(
                     byte_data[i+8:i+10], signed=True)
-                self.indicator_widget.fd3 = int.from_bytes(
+                self.indicator_udp_widget.fd3 = int.from_bytes(
                     byte_data[i+10:i+12], signed=True)
-                self.indicator_widget.tracking1 = bool(
+                self.indicator_udp_widget.tracking1 = bool(
                     (byte_data[i+23] & 0b0100_0000) >> 6)
-                self.indicator_widget.tracking2 = bool(
+                self.indicator_udp_widget.tracking2 = bool(
                     (byte_data[i+23] & 0b1000_0000) >> 7)
-                self.indicator_widget.tracking3 = bool(byte_data[i+22] & 0b1)
+                self.indicator_udp_widget.tracking3 = bool(byte_data[i+22] & 0b1)
+        if isinstance(self.signal, FileSignal):
+            (fd1, fd2, fd3), time_from_sig = self.signal.get_fd_and_times()
+            self.indicator_files_widget.fd1 = fd1
+            self.indicator_files_widget.fd2 = fd2
+            self.indicator_files_widget.fd3 = fd3
+            self.indicator_files_widget.time = time_from_sig
 
     def update_info(self):
         self.recieved_udp_packet_label.setText(
             f'Получено пакетов: {self.received_packets}')
-        self.indicator_widget.update_values()
+        self.indicator_udp_widget.update_values()
+        if isinstance(self.signal, FileSignal):
+            self.indicator_files_widget.update_values()
+        
+    def set_to_noise_mode(self, param):
+        if isinstance(self.signal, SinusSignal):
+            self.signal.set_to_noise(param)
 
     def close(self):
         if self.player:

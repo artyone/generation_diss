@@ -23,36 +23,37 @@ class SinusSignal:
         self.chunk_size = chunk_size
         self.current_index = 0
         self.current_channel = None
-        self.default_length_signal = 2 * np.pi
         self.init_signals()
 
     def init_signals(self):
-        self.signal_noise = self.gen_signal(ch=None)
+        self.signal_null = self.gen_signal(ch=None)
         self.signal_ch0 = self.gen_signal(ch=0)
         self.signal_ch1 = self.gen_signal(ch=1)
         self.signal_ch2 = self.gen_signal(ch=2)
 
     def gen_signal(self, ch):
-        if ch is not None:
+        t = np.arange(0, 1, 1 / self.sampling_rate)
+        if ch is None:
+            signal_stereo = np.zeros((len(t), 2))
+        else:
             freq = getattr(self, f'freq_unch{ch}')
             amp = getattr(self, f'amp_unch{ch}')
             phase_ch2 = getattr(self, f'phase_unch{ch}_ch2')
-        else:
-            freq = amp = phase_ch2 = 0
-
-        t = np.arange(0, 1, 1 / self.sampling_rate)
-        signal_left = amp * np.sin(t * 2 * np.pi * freq)
-        signal_right = amp * np.sin(t * 2 * np.pi * freq + phase_ch2)
-        signal_stereo = np.empty((len(t), 2))
-        signal_stereo[:, 0] = signal_left
-        signal_stereo[:, 1] = signal_right
+            signal_left = amp * np.sin(t * 2 * np.pi * freq)
+            signal_right = amp * np.sin(t * 2 * np.pi * freq + phase_ch2)
+            signal_stereo = np.empty((len(t), 2))
+            signal_stereo[:, 0] = signal_left
+            signal_stereo[:, 1] = signal_right
         return signal_stereo.astype(np.float32)
 
     def get_next_chunk(self):
-        if self.current_channel is not None:
-            current_signal = getattr(self, f'signal_ch{self.current_channel}')
+        if self.current_channel is None:
+            current_signal = self.signal_null
+        elif self.current_channel == 'noise':
+            current_signal = np.random.random_sample(
+                (self.chunk_size, 2)) * 2 - 1
         else:
-            current_signal = self.signal_noise
+            current_signal = getattr(self, f'signal_ch{self.current_channel}')
         current_index = self.current_index
         if len(current_signal) <= (current_index + self.chunk_size):
             chunk = np.vstack(
@@ -84,12 +85,20 @@ class SinusSignal:
         self.current_index = 0
 
     def switch_signal(self, channel):
+        if self.current_channel == 'noise':
+            return
         self.current_channel = channel
         # self.current_index = 0
 
+    def set_to_noise(self, param):
+        if param:
+            self.current_channel = 'noise'
+        else:
+            self.current_channel = None
+
 
 class FileSignal:
-    def __init__(self, chunk_size, sampling_rate, filenames):
+    def __init__(self, chunk_size, sampling_rate, filenames, cycle_play=False):
         self.chunk_size = chunk_size
         self.sampling_rate = sampling_rate
         self.filenames = filenames
@@ -102,6 +111,7 @@ class FileSignal:
             ('time', np.uint32),
             ('data', np.int8, 31)
         ]).newbyteorder('>')
+        self.cycle_play = cycle_play
 
         self.init_signals()
 
@@ -181,9 +191,12 @@ class FileSignal:
         for val in channel_switches_adr1:
             times.append(only_adr1[val]['time'])
             current_data = only_adr1[val]['data']
-            fd1 = (current_data[0] << 8) + current_data[1]
-            fd2 = (current_data[2] << 8) + current_data[3]
-            fd3 = (current_data[4] << 8) + current_data[5]
+            fd1 = (current_data[0] << 8).astype(
+                np.int16) + current_data[1].astype(np.uint8)
+            fd2 = (current_data[2] << 8).astype(
+                np.int16) + current_data[3].astype(np.uint8)
+            fd3 = (current_data[4] << 8).astype(
+                np.int16) + current_data[5].astype(np.uint8)
             fd.append((fd1, fd2, fd3))
 
         channels = {
@@ -211,7 +224,7 @@ class FileSignal:
                     # если потребуется экономия памяти
                     # result_data = resample_data / max(abs(resample_data)) * 127
                     # unch[index] = result_data.astype(np.int8)
-                    unch[index] = resample_data
+                    unch[index] = resample_data / np.max(np.abs(resample_data))
         return channels
 
     def gen_signal(self, channel, channels_data):
@@ -227,9 +240,14 @@ class FileSignal:
         if self.current_channel is None:
             return np.zeros((self.chunk_size, 2))
 
-        current_channel_data = getattr(self, f'signal_ch{self.current_channel}')
+        current_channel_data = getattr(
+            self, f'signal_ch{self.current_channel}')
         if self.current_index_in_signal >= len(current_channel_data):
-            self.current_index_in_signal = 0
+            if self.cycle_play:
+                self.current_index_in_signal = 0
+            else:
+                return np.array([])
+
         current_signal = current_channel_data[self.current_index_in_signal]
         if len(current_signal) <= (self.current_index_in_channel + self.chunk_size):
             self.current_index_in_channel = 0
@@ -245,23 +263,38 @@ class FileSignal:
         self.current_channel = channel
         self.current_index_in_channel = 0
 
+    def get_fd_and_times(self):
+        try:
+            fd = self.fd[self.current_index_in_signal * 3]
+            times = self.times[self.current_index_in_signal * 3]
+        except:
+            return (0, 0, 0), 0
+        return fd, times
+
 
 if __name__ == '__main__':
     import matplotlib.pyplot as plt
-    signal = FileSignal(chunk_size=64,
-                        sampling_rate=44100,
-                        filenames=['telemetry\d001\TMoo_00088_20230922112638.cap'])
-    b = signal.get_next_chunk()
 
-    signal.switch_signal(1)
+    # signal = FileSignal(chunk_size=64,
+    #                     sampling_rate=44100,
+    #                     filenames=['sinus_to2.pcapng'])
+    # b = signal.get_next_chunk()
+    # signal.switch_signal(2)
+    # b = signal.get_next_chunk()
+    # signal.switch_signal(0)
+    # a = signal.get_next_chunk()
+    # print(a.shape)
 
-    a = signal.get_next_chunk()
+    signal_sinus = SinusSignal(
+        6400, 44100, 4000, 4000, 4000, 1, 1, 1, 90, 90, 90
+    )
+    signal_sinus.set_to_noise(False)
+    signal_sinus.switch_signal(0)
+    a_sinus = signal_sinus.get_next_chunk()
+    # print(a_sinus)
+    plt.plot(a_sinus)
 
-    b = signal.get_next_chunk()
-
-    c = signal.get_next_chunk()
-
-    plt.plot(np.hstack((a[:, 0], b[:, 0], c[:, 0])))
-    plt.plot(np.hstack((a[:, 1], b[:, 1], c[:, 1])))
+    # plt.plot(a)
+    # plt.plot(b)
 
     plt.show()

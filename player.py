@@ -2,9 +2,9 @@ import pyaudio
 
 class CallbackPlayer:
     def __init__(
-            self, signal, device_index: int
+            self, parent, signal, device_index: int
     ):
-        
+        self.parent = parent
         self.signal = signal
         self.chunk_size = self.signal.chunk_size
         self.sampling_rate = self.signal.sampling_rate
@@ -36,7 +36,7 @@ class CallbackPlayer:
         if self.stream and self.stream.is_active():
             self.stream.close()
             self.stream = None
-        self.p.terminate()
+            self.p.terminate()
     
     def switch_signal(self, channel):
         self.signal.switch_signal(channel)
